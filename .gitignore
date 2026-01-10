@@ -1,0 +1,25 @@
+# Byte-compiled files
+*.elc
+
+# Backup files
+*~
+\#*\#
+.\#*
+
+# Auto-save files
+.#*
+
+# Package build artifacts
+/dist/
+*.tar
+
+# Coverage reports
+/coverage/
+
+# Local configuration
+.dir-locals.el
+
+# OS files
+.DS_Store
+Thumbs.db
+bytelocker.nvim/

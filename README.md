@@ -5,7 +5,8 @@
 
 Encryption plugin for Emacs providing casual privacy through multiple cipher implementations.
 
-[![demo](demo.mp4)](demo.mp4)
+
+![demo](./demo.mp4)
 
 ## Features
 

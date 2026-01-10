@@ -115,7 +115,7 @@ This plugin is designed for **casual privacy**, not cryptographic security. The 
 
 ## Testing
 
-Run tests with:
+Run tests:
 ```bash
 make test
 ```
@@ -123,6 +123,25 @@ make test
 Or in Emacs:
 ```
 M-x ert RET t RET
+```
+
+## Coverage
+
+Generate coverage report (requires [undercover.el](https://github.com/undercover-el/undercover.el)):
+
+```bash
+# Text report to stdout
+make coverage
+
+# LCOV format (for tools like genhtml, codecov)
+make coverage-lcov
+```
+
+To generate an HTML coverage report:
+```bash
+make coverage-lcov
+genhtml coverage/lcov.info -o coverage/html
+open coverage/html/index.html
 ```
 
 ## License

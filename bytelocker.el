@@ -79,9 +79,9 @@ Options are `shift', `xor', or `caesar'."
   :type 'directory
   :group 'bytelocker)
 
-(defcustom bytelocker-before-encrypt-hook '(bytelocker-push-global-mark)
+(defcustom bytelocker-before-encrypt-hook '(bytelocker-save-point)
   "Hook run before encrypting content.
-By default, pushes point to the global mark ring for easy navigation back."
+By default, saves point position to restore after decryption."
   :type 'hook
   :group 'bytelocker)
 
@@ -90,14 +90,14 @@ By default, pushes point to the global mark ring for easy navigation back."
   :type 'hook
   :group 'bytelocker)
 
-(defcustom bytelocker-before-decrypt-hook '(bytelocker-push-global-mark)
-  "Hook run before decrypting content.
-By default, pushes point to the global mark ring for easy navigation back."
+(defcustom bytelocker-before-decrypt-hook nil
+  "Hook run before decrypting content."
   :type 'hook
   :group 'bytelocker)
 
-(defcustom bytelocker-after-decrypt-hook nil
-  "Hook run after decrypting content."
+(defcustom bytelocker-after-decrypt-hook '(bytelocker-restore-point)
+  "Hook run after decrypting content.
+By default, restores point to position saved before encryption."
   :type 'hook
   :group 'bytelocker)
 
@@ -110,6 +110,9 @@ By default, pushes point to the global mark ring for easy navigation back."
 
 (defvar bytelocker--current-cipher nil
   "Currently selected cipher.")
+
+(defvar-local bytelocker--saved-point nil
+  "Buffer-local saved point position for restoration after decryption.")
 
 ;;; ============================================================================
 ;;; File Paths
@@ -549,6 +552,18 @@ Returns decrypted string or nil on failure."
 ;;; ============================================================================
 ;;; Hook Helpers
 ;;; ============================================================================
+
+(defun bytelocker-save-point ()
+  "Save current point position for later restoration.
+Called before encryption to remember cursor position."
+  (setq bytelocker--saved-point (point)))
+
+(defun bytelocker-restore-point ()
+  "Restore point to previously saved position.
+Called after decryption to return cursor to original location."
+  (when bytelocker--saved-point
+    (goto-char (min bytelocker--saved-point (point-max)))
+    (setq bytelocker--saved-point nil)))
 
 (defun bytelocker-push-global-mark ()
   "Push current position to the global mark ring.

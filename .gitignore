@@ -25,3 +25,5 @@ lcov.info
 .DS_Store
 Thumbs.db
 bytelocker.nvim/
+
+input.mov

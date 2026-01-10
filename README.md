@@ -5,6 +5,8 @@
 
 Encryption plugin for Emacs providing casual privacy through multiple cipher implementations.
 
+![demo](demo.mp4)
+
 ## Features
 
 - Three cipher implementations: **Shift**, **XOR**, and **Caesar**

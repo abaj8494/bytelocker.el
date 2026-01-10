@@ -1,7 +1,7 @@
 ;;; bytelocker.el --- Encryption plugin for Emacs -*- lexical-binding: t; -*-
 
 ;; Author: Aayush Bajaj
-;; Version: 1.0.0
+;; Version: 1.0.1
 ;; Package-Requires: ((emacs "25.1"))
 ;; Keywords: encryption, security, privacy
 ;; URL: https://github.com/abaj8494/bytelocker.el

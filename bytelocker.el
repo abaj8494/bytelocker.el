@@ -444,16 +444,26 @@ Returns decrypted bytes or nil on failure."
                      (original-length (bytelocker--bytes-to-int length-bytes))
                      (content-start (+ magic-len 4)))
                 (when (<= (+ content-start original-length) (length decrypted))
-                  (cl-subseq decrypted content-start (+ content-start original-length))))
+                  (if (zerop original-length)
+                      :empty  ; Sentinel for empty content
+                    (cl-subseq decrypted content-start (+ content-start original-length)))))
             nil))))))
 
 ;;; ============================================================================
 ;;; File Format Functions
 ;;; ============================================================================
 
+(defun bytelocker--string-to-bytes (str)
+  "Convert STR to list of UTF-8 bytes."
+  (append (encode-coding-string str 'utf-8) nil))
+
+(defun bytelocker--bytes-to-string (bytes)
+  "Convert list of UTF-8 BYTES to string."
+  (decode-coding-string (apply #'unibyte-string bytes) 'utf-8))
+
 (defun bytelocker--encrypt-for-file (content password cipher)
   "Encrypt CONTENT string for file storage with PASSWORD and CIPHER."
-  (let* ((bytes (string-to-list content))
+  (let* ((bytes (bytelocker--string-to-bytes content))
          (encrypted (bytelocker--encrypt-bytes bytes password cipher))
          (base64 (bytelocker--base64-encode encrypted)))
     (concat bytelocker-file-header "\n" base64 "\n" bytelocker-file-footer)))
@@ -466,8 +476,12 @@ Returns decrypted string or nil on failure."
            (base64-content (string-trim (nth 1 lines)))
            (encrypted-bytes (bytelocker--base64-decode base64-content))
            (decrypted-bytes (bytelocker--decrypt-bytes encrypted-bytes password cipher)))
-      (when decrypted-bytes
-        (apply #'string decrypted-bytes)))))
+      (cond
+       ;; nil means decryption failed (wrong password/cipher)
+       ((null decrypted-bytes) nil)
+       ;; :empty sentinel means original content was empty
+       ((eq decrypted-bytes :empty) "")
+       (t (bytelocker--bytes-to-string decrypted-bytes))))))
 
 ;;; ============================================================================
 ;;; Format Detection

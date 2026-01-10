@@ -79,6 +79,28 @@ Options are `shift', `xor', or `caesar'."
   :type 'directory
   :group 'bytelocker)
 
+(defcustom bytelocker-before-encrypt-hook '(bytelocker-push-global-mark)
+  "Hook run before encrypting content.
+By default, pushes point to the global mark ring for easy navigation back."
+  :type 'hook
+  :group 'bytelocker)
+
+(defcustom bytelocker-after-encrypt-hook nil
+  "Hook run after encrypting content."
+  :type 'hook
+  :group 'bytelocker)
+
+(defcustom bytelocker-before-decrypt-hook '(bytelocker-push-global-mark)
+  "Hook run before decrypting content.
+By default, pushes point to the global mark ring for easy navigation back."
+  :type 'hook
+  :group 'bytelocker)
+
+(defcustom bytelocker-after-decrypt-hook nil
+  "Hook run after decrypting content."
+  :type 'hook
+  :group 'bytelocker)
+
 ;;; ============================================================================
 ;;; Internal State
 ;;; ============================================================================
@@ -525,6 +547,22 @@ Returns decrypted string or nil on failure."
   (set-buffer-modified-p t))
 
 ;;; ============================================================================
+;;; Hook Helpers
+;;; ============================================================================
+
+(defun bytelocker-push-global-mark ()
+  "Push current position to the global mark ring.
+This allows jumping back with \\[pop-global-mark] after encryption/decryption.
+Does nothing in batch mode."
+  (unless noninteractive
+    (let ((marker (copy-marker (point-marker))))
+      (setq global-mark-ring (cons marker global-mark-ring))
+      ;; Limit global mark ring size
+      (when (> (length global-mark-ring) global-mark-ring-max)
+        (move-marker (car (nthcdr global-mark-ring-max global-mark-ring)) nil)
+        (setcdr (nthcdr (1- global-mark-ring-max) global-mark-ring) nil)))))
+
+;;; ============================================================================
 ;;; Public Commands
 ;;; ============================================================================
 
@@ -539,9 +577,11 @@ Returns decrypted string or nil on failure."
         (message "Bytelocker: Encryption cancelled - no password")
       (if (bytelocker--is-encrypted content)
           (message "Bytelocker: Content is already encrypted")
+        (run-hooks 'bytelocker-before-encrypt-hook)
         (let ((encrypted (bytelocker--encrypt-for-file content password cipher)))
           (bytelocker--replace-content encrypted)
-          (message "Bytelocker: Content encrypted with '%s' cipher" cipher))))))
+          (message "Bytelocker: Content encrypted with '%s' cipher" cipher)
+          (run-hooks 'bytelocker-after-encrypt-hook))))))
 
 ;;;###autoload
 (defun bytelocker-decrypt ()
@@ -554,11 +594,13 @@ Returns decrypted string or nil on failure."
         (message "Bytelocker: Decryption cancelled - no password")
       (if (not (bytelocker--is-encrypted content))
           (message "Bytelocker: Content is not encrypted")
+        (run-hooks 'bytelocker-before-decrypt-hook)
         (let ((decrypted (bytelocker--decrypt-from-file content password cipher)))
           (if decrypted
               (progn
                 (bytelocker--replace-content decrypted)
-                (message "Bytelocker: Content decrypted successfully"))
+                (message "Bytelocker: Content decrypted successfully")
+                (run-hooks 'bytelocker-after-decrypt-hook))
             (message "Bytelocker: Decryption failed - wrong password or cipher?")))))))
 
 ;;;###autoload

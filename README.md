@@ -12,6 +12,24 @@ Encryption plugin for Emacs providing casual privacy through multiple cipher imp
 
 ## Installation
 
+### straight.el
+
+```elisp
+(straight-use-package
+ '(bytelocker :type git :host github :repo "abaj8494/bytelocker.el"))
+(require 'bytelocker)
+(bytelocker-setup)
+```
+
+### straight.el + use-package
+
+```elisp
+(use-package bytelocker
+  :straight (:type git :host github :repo "abaj8494/bytelocker.el")
+  :config
+  (bytelocker-setup))
+```
+
 ### Manual
 
 Clone this repository and add to your load path:
@@ -22,20 +40,13 @@ Clone this repository and add to your load path:
 (bytelocker-setup)
 ```
 
-### use-package
+### use-package (manual path)
 
 ```elisp
 (use-package bytelocker
   :load-path "/path/to/bytelocker.el"
   :config
   (bytelocker-setup))
-```
-
-### straight.el
-
-```elisp
-(straight-use-package
- '(bytelocker :type git :host github :repo "abaj8494/bytelocker.el"))
 ```
 
 ## Usage

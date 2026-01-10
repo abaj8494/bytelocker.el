@@ -1,5 +1,8 @@
 # bytelocker.el
 
+[![CI](https://github.com/abaj8494/bytelocker.el/actions/workflows/ci.yml/badge.svg)](https://github.com/abaj8494/bytelocker.el/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/abaj8494/bytelocker.el/graph/badge.svg)](https://codecov.io/gh/abaj8494/bytelocker.el)
+
 Encryption plugin for Emacs providing casual privacy through multiple cipher implementations.
 
 ## Features

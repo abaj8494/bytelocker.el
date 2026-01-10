@@ -35,6 +35,7 @@ coverage:
 
 coverage-lcov:
 	@mkdir -p coverage
+	@rm -f coverage/lcov.info
 	cd $(CURDIR) && $(EMACS) --batch --eval "\
 	(progn \
 	  (add-to-list 'load-path \".\") \

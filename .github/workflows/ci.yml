@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs-version: ['28.2', '29.1', '29.4']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - name: Run tests
+        run: |
+          emacs --batch \
+            -l ert \
+            -l bytelocker.el \
+            -l bytelocker-test.el \
+            -f ert-run-tests-batch-and-exit
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: '29.4'
+
+      - name: Run tests with coverage
+        run: |
+          emacs --batch --eval "\
+          (progn \
+            (add-to-list 'load-path \".\") \
+            (require 'package) \
+            (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t) \
+            (package-initialize) \
+            (unless (package-installed-p 'undercover) \
+              (package-refresh-contents) \
+              (package-install 'undercover)) \
+            (require 'undercover) \
+            (setq undercover-force-coverage t) \
+            (undercover \"bytelocker.el\" \
+                        (:report-format 'lcov) \
+                        (:report-file \"coverage/lcov.info\") \
+                        (:send-report nil)) \
+            (require 'bytelocker) \
+            (require 'ert) \
+            (load \"bytelocker-test\") \
+            (ert-run-tests-batch-and-exit))"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: '29.4'
+
+      - name: Byte compile
+        run: |
+          emacs --batch \
+            -l bytelocker.el \
+            --eval "(byte-compile-file \"bytelocker.el\")"

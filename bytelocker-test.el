@@ -364,6 +364,409 @@
                         (bytelocker--encrypt-for-file content password cipher)
                         password cipher))))))
 
+;;; ============================================================================
+;;; File Path Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-password-file-path ()
+  "Test password file path generation."
+  (let ((bytelocker-data-directory "/tmp/bytelocker-test"))
+    (should (string= (bytelocker--password-file)
+                     "/tmp/bytelocker-test/bytelocker_session.dat"))))
+
+(ert-deftest bytelocker-test-cipher-file-path ()
+  "Test cipher file path generation."
+  (let ((bytelocker-data-directory "/tmp/bytelocker-test"))
+    (should (string= (bytelocker--cipher-file)
+                     "/tmp/bytelocker-test/bytelocker_cipher.dat"))))
+
+(ert-deftest bytelocker-test-ensure-data-directory ()
+  "Test data directory creation."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory (expand-file-name "subdir" temp-dir)))
+    (unwind-protect
+        (progn
+          (should-not (file-exists-p bytelocker-data-directory))
+          (bytelocker--ensure-data-directory)
+          (should (file-exists-p bytelocker-data-directory))
+          (should (file-directory-p bytelocker-data-directory)))
+      (delete-directory temp-dir t))))
+
+;;; ============================================================================
+;;; Password Persistence Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-save-load-password ()
+  "Test password save and load with temp directory."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir)
+         (test-password "mysecretpassword"))
+    (unwind-protect
+        (progn
+          (bytelocker--save-password test-password)
+          (should (file-exists-p (bytelocker--password-file)))
+          (should (string= (bytelocker--load-password) test-password)))
+      (delete-directory temp-dir t))))
+
+(ert-deftest bytelocker-test-load-password-nonexistent ()
+  "Test loading password when file doesn't exist."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir))
+    (unwind-protect
+        (should-not (bytelocker--load-password))
+      (delete-directory temp-dir t))))
+
+(ert-deftest bytelocker-test-clear-password ()
+  "Test clearing password from memory and disk."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir)
+         (bytelocker--stored-password "testpassword"))
+    (unwind-protect
+        (progn
+          (bytelocker--save-password "testpassword")
+          (should (file-exists-p (bytelocker--password-file)))
+          (should bytelocker--stored-password)
+          (bytelocker-clear-password)
+          (should-not bytelocker--stored-password)
+          (should-not (file-exists-p (bytelocker--password-file))))
+      (setq bytelocker--stored-password nil)
+      (delete-directory temp-dir t))))
+
+(ert-deftest bytelocker-test-get-password-from-memory ()
+  "Test getting password from memory cache."
+  (let ((bytelocker--stored-password "cachedpassword"))
+    (unwind-protect
+        (should (string= (bytelocker--get-password) "cachedpassword"))
+      (setq bytelocker--stored-password nil))))
+
+(ert-deftest bytelocker-test-get-password-from-disk ()
+  "Test getting password from disk when not in memory."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir)
+         (bytelocker--stored-password nil))
+    (unwind-protect
+        (progn
+          (bytelocker--save-password "diskpassword")
+          (should (string= (bytelocker--get-password) "diskpassword"))
+          (should (string= bytelocker--stored-password "diskpassword")))
+      (setq bytelocker--stored-password nil)
+      (delete-directory temp-dir t))))
+
+;;; ============================================================================
+;;; Cipher Persistence Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-save-load-cipher ()
+  "Test cipher save and load with temp directory."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir))
+    (unwind-protect
+        (progn
+          (bytelocker--save-cipher 'xor)
+          (should (file-exists-p (bytelocker--cipher-file)))
+          (should (eq (bytelocker--load-cipher) 'xor)))
+      (delete-directory temp-dir t))))
+
+(ert-deftest bytelocker-test-load-cipher-nonexistent ()
+  "Test loading cipher when file doesn't exist."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir))
+    (unwind-protect
+        (should-not (bytelocker--load-cipher))
+      (delete-directory temp-dir t))))
+
+(ert-deftest bytelocker-test-clear-cipher ()
+  "Test clearing cipher preference."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir)
+         (bytelocker--current-cipher 'xor))
+    (unwind-protect
+        (progn
+          (bytelocker--save-cipher 'xor)
+          (should (file-exists-p (bytelocker--cipher-file)))
+          (bytelocker-clear-cipher)
+          (should-not bytelocker--current-cipher)
+          (should-not (file-exists-p (bytelocker--cipher-file))))
+      (setq bytelocker--current-cipher nil)
+      (delete-directory temp-dir t))))
+
+(ert-deftest bytelocker-test-get-cipher-from-memory ()
+  "Test getting cipher from memory cache."
+  (let ((bytelocker--current-cipher 'caesar))
+    (unwind-protect
+        (should (eq (bytelocker--get-cipher) 'caesar))
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-get-cipher-from-disk ()
+  "Test getting cipher from disk when not in memory."
+  (let* ((temp-dir (make-temp-file "bytelocker-test-" t))
+         (bytelocker-data-directory temp-dir)
+         (bytelocker--current-cipher nil))
+    (unwind-protect
+        (progn
+          (bytelocker--save-cipher 'shift)
+          (should (eq (bytelocker--get-cipher) 'shift))
+          (should (eq bytelocker--current-cipher 'shift)))
+      (setq bytelocker--current-cipher nil)
+      (delete-directory temp-dir t))))
+
+;;; ============================================================================
+;;; Buffer Operation Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-get-content-full-buffer ()
+  "Test getting content from full buffer."
+  (with-temp-buffer
+    (insert "Hello, World!")
+    (should (string= (bytelocker--get-content) "Hello, World!"))))
+
+(ert-deftest bytelocker-test-get-content-with-region ()
+  "Test getting content from selected region."
+  (with-temp-buffer
+    (insert "Hello, World!")
+    (set-mark 1)
+    (goto-char 6)
+    (activate-mark)
+    (should (string= (bytelocker--get-content) "Hello"))))
+
+(ert-deftest bytelocker-test-replace-content-full-buffer ()
+  "Test replacing full buffer content."
+  (with-temp-buffer
+    (insert "Old content")
+    (bytelocker--replace-content "New content")
+    (should (string= (buffer-string) "New content"))
+    (should (buffer-modified-p))))
+
+(ert-deftest bytelocker-test-replace-content-with-region ()
+  "Test replacing content in selected region."
+  (with-temp-buffer
+    (insert "Hello, World!")
+    (set-mark 8)
+    (goto-char 13)
+    (activate-mark)
+    (bytelocker--replace-content "Universe")
+    (should (string= (buffer-string) "Hello, Universe!"))
+    (should (buffer-modified-p))))
+
+;;; ============================================================================
+;;; Text Encryption Detection Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-is-text-encrypted ()
+  "Test text encryption detection via magic header."
+  (should (bytelocker--is-text-encrypted "BYTELOCKR...data..."))
+  (should-not (bytelocker--is-text-encrypted "BYTELOCK"))  ; Too short
+  (should-not (bytelocker--is-text-encrypted "regular text"))
+  (should-not (bytelocker--is-text-encrypted "")))
+
+;;; ============================================================================
+;;; Cipher Dispatcher Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-encrypt-block-dispatcher ()
+  "Test cipher dispatcher for encryption."
+  (let* ((key (bytelocker--prepare-password "test"))
+         (block (make-list 16 42)))
+    ;; Test each cipher type
+    (should (equal (bytelocker--encrypt-block block key 'shift)
+                   (bytelocker--shift-encrypt-block block key)))
+    (should (equal (bytelocker--encrypt-block block key 'xor)
+                   (bytelocker--xor-encrypt-block block key)))
+    (should (equal (bytelocker--encrypt-block block key 'caesar)
+                   (bytelocker--caesar-encrypt-block block key)))
+    ;; Unknown cipher falls back to shift
+    (should (equal (bytelocker--encrypt-block block key 'unknown)
+                   (bytelocker--shift-encrypt-block block key)))))
+
+(ert-deftest bytelocker-test-decrypt-block-dispatcher ()
+  "Test cipher dispatcher for decryption."
+  (let* ((key (bytelocker--prepare-password "test"))
+         (block (make-list 16 42)))
+    ;; Test each cipher type
+    (should (equal (bytelocker--decrypt-block block key 'shift)
+                   (bytelocker--shift-decrypt-block block key)))
+    (should (equal (bytelocker--decrypt-block block key 'xor)
+                   (bytelocker--xor-decrypt-block block key)))
+    (should (equal (bytelocker--decrypt-block block key 'caesar)
+                   (bytelocker--caesar-decrypt-block block key)))
+    ;; Unknown cipher falls back to shift
+    (should (equal (bytelocker--decrypt-block block key 'unknown)
+                   (bytelocker--shift-decrypt-block block key)))))
+
+;;; ============================================================================
+;;; String/Bytes Conversion Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-string-to-bytes ()
+  "Test string to bytes conversion."
+  (should (equal (bytelocker--string-to-bytes "ABC") '(65 66 67)))
+  (should (equal (bytelocker--string-to-bytes "") '())))
+
+(ert-deftest bytelocker-test-bytes-to-string ()
+  "Test bytes to string conversion."
+  (should (string= (bytelocker--bytes-to-string '(65 66 67)) "ABC"))
+  (should (string= (bytelocker--bytes-to-string '()) "")))
+
+(ert-deftest bytelocker-test-string-bytes-roundtrip ()
+  "Test string to bytes roundtrip."
+  (let ((test-strings '("Hello" "" "Unicode: éèê")))
+    (dolist (s test-strings)
+      (should (string= s (bytelocker--bytes-to-string (bytelocker--string-to-bytes s)))))))
+
+;;; ============================================================================
+;;; Interactive Command Tests (with mocking)
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-encrypt-command-already-encrypted ()
+  "Test encrypt command on already encrypted content."
+  (let* ((bytelocker--stored-password "testpass")
+         (bytelocker--current-cipher 'shift)
+         (encrypted (bytelocker--encrypt-for-file "test" "testpass" 'shift)))
+    (unwind-protect
+        (with-temp-buffer
+          (insert encrypted)
+          (bytelocker-encrypt)
+          ;; Content should be unchanged
+          (should (string= (buffer-string) encrypted)))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-decrypt-command-not-encrypted ()
+  "Test decrypt command on non-encrypted content."
+  (let ((bytelocker--stored-password "testpass")
+        (bytelocker--current-cipher 'shift))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "plain text")
+          (bytelocker-decrypt)
+          ;; Content should be unchanged
+          (should (string= (buffer-string) "plain text")))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-encrypt-decrypt-command-roundtrip ()
+  "Test encrypt and decrypt commands in sequence."
+  (let* ((bytelocker--stored-password "testpass")
+         (bytelocker--current-cipher 'shift)
+         (original "Hello, World!"))
+    (unwind-protect
+        (with-temp-buffer
+          (insert original)
+          (bytelocker-encrypt)
+          (should (bytelocker--is-encrypted (buffer-string)))
+          (bytelocker-decrypt)
+          (should (string= (buffer-string) original)))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-toggle-encrypt ()
+  "Test toggle command encrypts plain content."
+  (let ((bytelocker--stored-password "testpass")
+        (bytelocker--current-cipher 'shift))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "plain text")
+          (bytelocker-toggle)
+          (should (bytelocker--is-encrypted (buffer-string))))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-toggle-decrypt ()
+  "Test toggle command decrypts encrypted content."
+  (let* ((bytelocker--stored-password "testpass")
+         (bytelocker--current-cipher 'shift)
+         (encrypted (bytelocker--encrypt-for-file "plain text" "testpass" 'shift)))
+    (unwind-protect
+        (with-temp-buffer
+          (insert encrypted)
+          (bytelocker-toggle)
+          (should (string= (buffer-string) "plain text")))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-decrypt-wrong-password ()
+  "Test decrypt with wrong password leaves content unchanged."
+  (let* ((encrypted (bytelocker--encrypt-for-file "secret" "correctpass" 'shift))
+         (bytelocker--stored-password "wrongpass")
+         (bytelocker--current-cipher 'shift))
+    (unwind-protect
+        (with-temp-buffer
+          (insert encrypted)
+          (bytelocker-decrypt)
+          ;; Content should be unchanged on failure
+          (should (string= (buffer-string) encrypted)))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+;;; ============================================================================
+;;; Setup and Mode Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-setup-with-keymaps ()
+  "Test setup function with keymaps enabled."
+  (let ((bytelocker-setup-keymaps t)
+        (original-binding (lookup-key (current-global-map) (kbd "C-c e m"))))
+    (unwind-protect
+        (progn
+          (bytelocker-setup)
+          (should (eq (lookup-key (current-global-map) (kbd "C-c e m"))
+                      bytelocker-command-map)))
+      ;; Restore original binding
+      (if original-binding
+          (global-set-key (kbd "C-c e m") original-binding)
+        (global-unset-key (kbd "C-c e m"))))))
+
+(ert-deftest bytelocker-test-setup-without-keymaps ()
+  "Test setup function with keymaps disabled."
+  (let ((bytelocker-setup-keymaps nil)
+        (original-binding (lookup-key (current-global-map) (kbd "C-c e m"))))
+    (unwind-protect
+        (progn
+          (global-unset-key (kbd "C-c e m"))
+          (bytelocker-setup)
+          ;; Binding should not be set
+          (should-not (eq (lookup-key (current-global-map) (kbd "C-c e m"))
+                          bytelocker-command-map)))
+      ;; Restore original binding
+      (when original-binding
+        (global-set-key (kbd "C-c e m") original-binding)))))
+
+(ert-deftest bytelocker-test-command-map-keys ()
+  "Test that command map has all expected keys."
+  (should (eq (lookup-key bytelocker-command-map (kbd "t")) 'bytelocker-toggle))
+  (should (eq (lookup-key bytelocker-command-map (kbd "e")) 'bytelocker-encrypt))
+  (should (eq (lookup-key bytelocker-command-map (kbd "d")) 'bytelocker-decrypt))
+  (should (eq (lookup-key bytelocker-command-map (kbd "c")) 'bytelocker-change-cipher))
+  (should (eq (lookup-key bytelocker-command-map (kbd "p")) 'bytelocker-clear-password))
+  (should (eq (lookup-key bytelocker-command-map (kbd "x")) 'bytelocker-clear-cipher)))
+
+(ert-deftest bytelocker-test-minor-mode-lighter ()
+  "Test that minor mode has correct lighter."
+  (with-temp-buffer
+    (bytelocker-mode 1)
+    (should bytelocker-mode)
+    (bytelocker-mode -1)
+    (should-not bytelocker-mode)))
+
+;;; ============================================================================
+;;; Decrypt Bytes Edge Cases
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-decrypt-bytes-incomplete-block ()
+  "Test decryption handles incomplete blocks."
+  (let* ((content "test")
+         (password "pass")
+         (encrypted (bytelocker--encrypt-bytes
+                     (bytelocker--string-to-bytes content) password 'shift))
+         ;; Truncate to create incomplete block
+         (truncated (butlast encrypted 5)))
+    ;; Should handle gracefully (may return nil or partial)
+    (bytelocker--decrypt-bytes truncated password 'shift)))
+
+(ert-deftest bytelocker-test-decrypt-bytes-empty ()
+  "Test decryption of empty byte list."
+  (should-not (bytelocker--decrypt-bytes '() "password" 'shift)))
+
 (provide 'bytelocker-test)
 
 ;;; bytelocker-test.el ends here

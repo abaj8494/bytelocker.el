@@ -549,6 +549,101 @@ Returns decrypted string or nil on failure."
     (insert new-content))
   (set-buffer-modified-p t))
 
+(defun bytelocker--buffer-has-read-only-p ()
+  "Return t if the current buffer contains any read-only text regions."
+  (let ((pos (point-min))
+        (found nil))
+    (while (and (not found) (< pos (point-max)))
+      (if (get-text-property pos 'read-only)
+          (setq found t)
+        (let ((next (next-single-property-change pos 'read-only)))
+          (setq pos (or next (point-max))))))
+    found))
+
+(defun bytelocker--get-writable-regions ()
+  "Return list of (BEG . END) pairs for non-read-only regions.
+Skips empty regions where BEG = END."
+  (let ((pos (point-min))
+        (regions '()))
+    (while (< pos (point-max))
+      (if (get-text-property pos 'read-only)
+          ;; Skip read-only region
+          (setq pos (or (next-single-property-change pos 'read-only)
+                        (point-max)))
+        ;; Writable region
+        (let ((end (or (next-single-property-change pos 'read-only)
+                       (point-max))))
+          (when (< pos end)
+            (push (cons pos end) regions))
+          (setq pos end))))
+    (nreverse regions)))
+
+(defun bytelocker--encrypt-writable-regions (password cipher)
+  "Encrypt each writable region with PASSWORD and CIPHER.
+Processes regions end-to-start so positions remain valid.
+Skips already-encrypted and whitespace-only regions."
+  (run-hooks 'bytelocker-before-encrypt-hook)
+  (let ((regions (reverse (bytelocker--get-writable-regions)))
+        (encrypted-count 0))
+    (dolist (region regions)
+      (let* ((beg (car region))
+             (end (cdr region))
+             (content (buffer-substring-no-properties beg end)))
+        (unless (or (bytelocker--is-encrypted content)
+                    (string-match-p "\\`[ \t\n\r]*\\'" content))
+          (let ((encrypted (bytelocker--encrypt-for-file content password cipher)))
+            (save-excursion
+              (let ((inhibit-read-only t))
+                (delete-region beg end)
+                (goto-char beg)
+                (insert encrypted)))
+            (setq encrypted-count (1+ encrypted-count))))))
+    (when (> encrypted-count 0)
+      (set-buffer-modified-p t)
+      (message "Bytelocker: Encrypted %d region(s) with '%s' cipher"
+               encrypted-count cipher))
+    (run-hooks 'bytelocker-after-encrypt-hook)))
+
+(defun bytelocker--encrypted-block-at-point ()
+  "Return (BEG . END) of encrypted block surrounding point, or nil."
+  (save-excursion
+    (let ((here (point))
+          header-beg footer-end)
+      ;; Search backward for header from end of current line
+      (goto-char (line-end-position))
+      (when (search-backward bytelocker-file-header nil t)
+        (setq header-beg (point))
+        ;; Search forward for footer from header
+        (goto-char header-beg)
+        (when (search-forward bytelocker-file-footer nil t)
+          (setq footer-end (point))
+          ;; Validate point falls within the block
+          (when (and (<= header-beg here) (<= here footer-end))
+            (cons header-beg footer-end)))))))
+
+(defun bytelocker--decrypt-block-at-point (bounds)
+  "Decrypt the encrypted block at BOUNDS (BEG . END).
+BOUNDS is a cons cell as returned by `bytelocker--encrypted-block-at-point'."
+  (let* ((beg (car bounds))
+         (end (cdr bounds))
+         (content (buffer-substring-no-properties beg end))
+         (password (bytelocker--get-password))
+         (cipher (bytelocker--get-cipher)))
+    (if (not password)
+        (message "Bytelocker: Decryption cancelled - no password")
+      (run-hooks 'bytelocker-before-decrypt-hook)
+      (let ((decrypted (bytelocker--decrypt-from-file content password cipher)))
+        (if decrypted
+            (progn
+              (save-excursion
+                (delete-region beg end)
+                (goto-char beg)
+                (insert decrypted))
+              (set-buffer-modified-p t)
+              (message "Bytelocker: Block decrypted successfully")
+              (run-hooks 'bytelocker-after-decrypt-hook))
+          (message "Bytelocker: Decryption failed - wrong password or cipher?"))))))
+
 ;;; ============================================================================
 ;;; Hook Helpers
 ;;; ============================================================================
@@ -583,49 +678,70 @@ Does nothing in batch mode."
 
 ;;;###autoload
 (defun bytelocker-encrypt ()
-  "Encrypt current buffer or region."
+  "Encrypt current buffer or region.
+When the buffer contains read-only text and no region is active,
+offers to encrypt around read-only regions individually."
   (interactive)
-  (let* ((content (bytelocker--get-content))
-         (password (bytelocker--get-password))
-         (cipher (bytelocker--get-cipher)))
-    (if (not password)
-        (message "Bytelocker: Encryption cancelled - no password")
-      (if (bytelocker--is-encrypted content)
-          (message "Bytelocker: Content is already encrypted")
-        (run-hooks 'bytelocker-before-encrypt-hook)
-        (let ((encrypted (bytelocker--encrypt-for-file content password cipher)))
-          (bytelocker--replace-content encrypted)
-          (message "Bytelocker: Content encrypted with '%s' cipher" cipher)
-          (run-hooks 'bytelocker-after-encrypt-hook))))))
+  (if (and (not (use-region-p))
+           (bytelocker--buffer-has-read-only-p))
+      ;; Buffer has read-only text — offer to encrypt around it
+      (when (y-or-n-p "Encrypt around read-only text? ")
+        (let ((password (bytelocker--get-password))
+              (cipher (bytelocker--get-cipher)))
+          (when password
+            (bytelocker--encrypt-writable-regions password cipher))))
+    ;; Original behavior
+    (let* ((content (bytelocker--get-content))
+           (password (bytelocker--get-password))
+           (cipher (bytelocker--get-cipher)))
+      (if (not password)
+          (message "Bytelocker: Encryption cancelled - no password")
+        (if (bytelocker--is-encrypted content)
+            (message "Bytelocker: Content is already encrypted")
+          (run-hooks 'bytelocker-before-encrypt-hook)
+          (let ((encrypted (bytelocker--encrypt-for-file content password cipher)))
+            (bytelocker--replace-content encrypted)
+            (message "Bytelocker: Content encrypted with '%s' cipher" cipher)
+            (run-hooks 'bytelocker-after-encrypt-hook)))))))
 
 ;;;###autoload
 (defun bytelocker-decrypt ()
-  "Decrypt current buffer or region."
+  "Decrypt current buffer, region, or encrypted block at point."
   (interactive)
-  (let* ((content (bytelocker--get-content))
-         (password (bytelocker--get-password))
-         (cipher (bytelocker--get-cipher)))
-    (if (not password)
-        (message "Bytelocker: Decryption cancelled - no password")
-      (if (not (bytelocker--is-encrypted content))
-          (message "Bytelocker: Content is not encrypted")
-        (run-hooks 'bytelocker-before-decrypt-hook)
-        (let ((decrypted (bytelocker--decrypt-from-file content password cipher)))
-          (if decrypted
-              (progn
-                (bytelocker--replace-content decrypted)
-                (message "Bytelocker: Content decrypted successfully")
-                (run-hooks 'bytelocker-after-decrypt-hook))
-            (message "Bytelocker: Decryption failed - wrong password or cipher?")))))))
+  (let ((block (and (not (use-region-p))
+                    (bytelocker--encrypted-block-at-point))))
+    (if block
+        (bytelocker--decrypt-block-at-point block)
+      ;; Original behavior
+      (let* ((content (bytelocker--get-content))
+             (password (bytelocker--get-password))
+             (cipher (bytelocker--get-cipher)))
+        (if (not password)
+            (message "Bytelocker: Decryption cancelled - no password")
+          (if (not (bytelocker--is-encrypted content))
+              (message "Bytelocker: Content is not encrypted")
+            (run-hooks 'bytelocker-before-decrypt-hook)
+            (let ((decrypted (bytelocker--decrypt-from-file content password cipher)))
+              (if decrypted
+                  (progn
+                    (bytelocker--replace-content decrypted)
+                    (message "Bytelocker: Content decrypted successfully")
+                    (run-hooks 'bytelocker-after-decrypt-hook))
+                (message "Bytelocker: Decryption failed - wrong password or cipher?")))))))))
 
 ;;;###autoload
 (defun bytelocker-toggle ()
-  "Toggle encryption/decryption based on current content state."
+  "Toggle encryption/decryption based on current content state.
+If point is inside an encrypted block, decrypts just that block."
   (interactive)
-  (let ((content (bytelocker--get-content)))
-    (if (bytelocker--is-encrypted content)
-        (bytelocker-decrypt)
-      (bytelocker-encrypt))))
+  (let ((block (and (not (use-region-p))
+                    (bytelocker--encrypted-block-at-point))))
+    (if block
+        (bytelocker--decrypt-block-at-point block)
+      (let ((content (bytelocker--get-content)))
+        (if (bytelocker--is-encrypted content)
+            (bytelocker-decrypt)
+          (bytelocker-encrypt))))))
 
 ;;; ============================================================================
 ;;; Keymap Setup

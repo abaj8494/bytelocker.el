@@ -767,6 +767,194 @@
   "Test decryption of empty byte list."
   (should-not (bytelocker--decrypt-bytes '() "password" 'shift)))
 
+;;; ============================================================================
+;;; Read-Only Region Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-buffer-has-read-only-p-none ()
+  "Test buffer-has-read-only-p with no read-only text."
+  (with-temp-buffer
+    (insert "Hello, World!")
+    (should-not (bytelocker--buffer-has-read-only-p))))
+
+(ert-deftest bytelocker-test-buffer-has-read-only-p-some ()
+  "Test buffer-has-read-only-p with some read-only text."
+  (with-temp-buffer
+    (insert "Hello, World!")
+    (put-text-property 1 6 'read-only t)
+    (should (bytelocker--buffer-has-read-only-p))))
+
+(ert-deftest bytelocker-test-buffer-has-read-only-p-empty ()
+  "Test buffer-has-read-only-p with empty buffer."
+  (with-temp-buffer
+    (should-not (bytelocker--buffer-has-read-only-p))))
+
+(ert-deftest bytelocker-test-get-writable-regions-no-readonly ()
+  "Test get-writable-regions with no read-only text."
+  (with-temp-buffer
+    (insert "Hello, World!")
+    (let ((regions (bytelocker--get-writable-regions)))
+      (should (= (length regions) 1))
+      (should (equal (car regions) (cons 1 14))))))
+
+(ert-deftest bytelocker-test-get-writable-regions-mixed ()
+  "Test get-writable-regions with mixed read-only and writable text."
+  (with-temp-buffer
+    (insert "aaa")        ; 1-4
+    (insert "READONLY")   ; 4-12
+    (insert "bbb")        ; 12-15
+    (put-text-property 4 12 'read-only t)
+    (let ((regions (bytelocker--get-writable-regions)))
+      (should (= (length regions) 2))
+      (should (equal (nth 0 regions) (cons 1 4)))
+      (should (equal (nth 1 regions) (cons 12 15))))))
+
+(ert-deftest bytelocker-test-get-writable-regions-all-readonly ()
+  "Test get-writable-regions when entire buffer is read-only."
+  (with-temp-buffer
+    (insert "Read only content")
+    (put-text-property (point-min) (point-max) 'read-only t)
+    (should (null (bytelocker--get-writable-regions)))))
+
+;;; ============================================================================
+;;; Encrypt Writable Regions Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-encrypt-writable-regions-roundtrip ()
+  "Test encrypting writable regions preserves read-only text and roundtrips."
+  (let ((bytelocker--stored-password "testpass")
+        (bytelocker--current-cipher 'shift))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((inhibit-read-only t))
+            (insert "writable1")
+            (let ((ro-start (point)))
+              (insert "READONLY")
+              (put-text-property ro-start (point) 'read-only t))
+            (insert "writable2"))
+          ;; Encrypt writable regions
+          (bytelocker--encrypt-writable-regions "testpass" 'shift)
+          ;; Read-only text should still be present
+          (should (string-match-p "READONLY" (buffer-string)))
+          ;; Writable regions should be encrypted
+          (should-not (string-match-p "writable1" (buffer-string)))
+          (should-not (string-match-p "writable2" (buffer-string)))
+          ;; Should have encrypted blocks
+          (should (string-match-p bytelocker-file-header (buffer-string))))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-encrypt-writable-regions-skips-whitespace ()
+  "Test that encrypt-writable-regions skips whitespace-only regions."
+  (with-temp-buffer
+    (let ((inhibit-read-only t))
+      (insert "   ")
+      (let ((ro-start (point)))
+        (insert "READONLY")
+        (put-text-property ro-start (point) 'read-only t))
+      (insert "content"))
+    (bytelocker--encrypt-writable-regions "testpass" 'shift)
+    ;; Whitespace region should be unchanged
+    (should (string-prefix-p "   " (buffer-string)))
+    ;; Content region should be encrypted
+    (should-not (string-match-p "content" (buffer-string)))))
+
+;;; ============================================================================
+;;; Encrypted Block at Point Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-encrypted-block-at-point-inside ()
+  "Test finding encrypted block when point is inside one."
+  (with-temp-buffer
+    (insert "before\n")
+    (let ((block-start (point)))
+      (insert (bytelocker--encrypt-for-file "secret" "testpass" 'shift))
+      (let ((block-end (point)))
+        (insert "\nafter")
+        ;; Place point inside the encrypted block (on the base64 line)
+        (goto-char (+ block-start 5))
+        (let ((bounds (bytelocker--encrypted-block-at-point)))
+          (should bounds)
+          (should (= (car bounds) block-start))
+          (should (= (cdr bounds) block-end)))))))
+
+(ert-deftest bytelocker-test-encrypted-block-at-point-outside ()
+  "Test that no block is found when point is outside any block."
+  (with-temp-buffer
+    (insert "before\n")
+    (insert (bytelocker--encrypt-for-file "secret" "testpass" 'shift))
+    (insert "\nafter")
+    ;; Place point before the block
+    (goto-char 3)
+    (should-not (bytelocker--encrypted-block-at-point))))
+
+(ert-deftest bytelocker-test-encrypted-block-at-point-on-header ()
+  "Test finding block when point is on the header line."
+  (with-temp-buffer
+    (let ((block-start (point)))
+      (insert (bytelocker--encrypt-for-file "secret" "testpass" 'shift))
+      (let ((block-end (point)))
+        ;; Point on the header
+        (goto-char block-start)
+        (let ((bounds (bytelocker--encrypted-block-at-point)))
+          (should bounds)
+          (should (= (car bounds) block-start))
+          (should (= (cdr bounds) block-end)))))))
+
+(ert-deftest bytelocker-test-encrypted-block-at-point-on-footer ()
+  "Test finding block when point is on the footer line."
+  (with-temp-buffer
+    (let ((block-start (point)))
+      (insert (bytelocker--encrypt-for-file "secret" "testpass" 'shift))
+      (let ((block-end (point)))
+        ;; Point on the footer
+        (goto-char (- block-end 5))
+        (let ((bounds (bytelocker--encrypted-block-at-point)))
+          (should bounds)
+          (should (= (car bounds) block-start))
+          (should (= (cdr bounds) block-end)))))))
+
+;;; ============================================================================
+;;; Decrypt Block at Point Tests
+;;; ============================================================================
+
+(ert-deftest bytelocker-test-decrypt-block-at-point-roundtrip ()
+  "Test decrypting a single block preserves surrounding text."
+  (let ((bytelocker--stored-password "testpass")
+        (bytelocker--current-cipher 'shift))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "before\n")
+          (let ((block-start (point)))
+            (insert (bytelocker--encrypt-for-file "secret" "testpass" 'shift)))
+          (insert "\nafter")
+          ;; Place point inside the block
+          (goto-char (+ (length "before\n") 5))
+          (let ((bounds (bytelocker--encrypted-block-at-point)))
+            (should bounds)
+            (bytelocker--decrypt-block-at-point bounds))
+          ;; Check result
+          (should (string= (buffer-string) "before\nsecret\nafter")))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
+(ert-deftest bytelocker-test-decrypt-block-wrong-password ()
+  "Test decrypting block with wrong password leaves content unchanged."
+  (let* ((bytelocker--stored-password "wrongpass")
+         (bytelocker--current-cipher 'shift)
+         (encrypted (bytelocker--encrypt-for-file "secret" "correctpass" 'shift)))
+    (unwind-protect
+        (with-temp-buffer
+          (insert encrypted)
+          (goto-char 5)
+          (let ((bounds (bytelocker--encrypted-block-at-point)))
+            (should bounds)
+            (bytelocker--decrypt-block-at-point bounds))
+          ;; Content should be unchanged
+          (should (string= (buffer-string) encrypted)))
+      (setq bytelocker--stored-password nil)
+      (setq bytelocker--current-cipher nil))))
+
 (provide 'bytelocker-test)
 
 ;;; bytelocker-test.el ends here
